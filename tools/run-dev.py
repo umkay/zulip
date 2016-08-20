@@ -1,5 +1,6 @@
 #!/usr/bin/env python2
 from __future__ import print_function
+from __future__ import unicode_literals
 
 import optparse
 import subprocess
@@ -7,32 +8,39 @@ import signal
 import traceback
 import sys
 import os
+import sys
+import json
 
+from tornado.httpclient import HTTPRequest, HTTPClient, AsyncHTTPClient
+from tornado.web import RequestHandler, Application
+from tornado.ioloop import IOLoop
+
+from six.moves.urllib.parse import urlunparse
 if False: from typing import Any
 
 # find out python version
-major_version = int(subprocess.check_output(['python', '-c', 'import sys; print(sys.version_info[0])']))
-if major_version != 2:
+# major_version = int(subprocess.check_output(['python', '-c', 'import sys; print(sys.version_info[0])']))
+# if major_version != 2:
     # use twisted from its python2 venv but use django, tornado, etc. from the python3 venv.
-    PATH = os.environ["PATH"]
-    activate_this = "/srv/zulip-venv/bin/activate_this.py"
-    if not os.path.exists(activate_this):
-        activate_this = "/srv/zulip-py2-twisted-venv/bin/activate_this.py"
-    exec(open(activate_this).read(), {}, dict(__file__=activate_this)) # type: ignore # https://github.com/python/mypy/issues/1577
-    os.environ["PATH"] = PATH
+    # PATH = os.environ["PATH"]
+    # activate_this = "/srv/zulip-venv/bin/activate_this.py"
+    # if not os.path.exists(activate_this):
+    #     activate_this = "/srv/zulip-py2-twisted-venv/bin/activate_this.py"
+    # exec(open(activate_this).read(), {}, dict(__file__=activate_this)) # type: ignore # https://github.com/python/mypy/issues/1577
+    # os.environ["PATH"] = PATH
 
 from twisted.internet import reactor
 from twisted.web      import proxy, server, resource
 
 # Monkey-patch twisted.web.http to avoid request.finish exceptions
 # https://trac.zulip.net/ticket/1728
-from twisted.web.http import Request
-orig_finish = Request.finish
-def patched_finish(self):
-    # type: (Any) -> None
-    if not self._disconnected:
-        orig_finish(self)
-Request.finish = patched_finish
+# from twisted.web.http import Request
+# orig_finish = Request.finish
+# def patched_finish(self):
+#     # type: (Any) -> None
+#     if not self._disconnected:
+#         orig_finish(self)
+# Request.finish = patched_finish
 
 if 'posix' in os.name and os.geteuid() == 0:
     raise RuntimeError("run-dev.py should not be run as root.")
@@ -77,8 +85,8 @@ os.environ['DJANGO_SETTINGS_MODULE'] = settings_module
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-proxy_port   = base_port
-django_port  = base_port+1
+proxy_port = base_port
+django_port = base_port+1
 tornado_port = base_port+2
 webpack_port = base_port+3
 
@@ -116,33 +124,104 @@ else:
 for cmd in cmds:
     subprocess.Popen(cmd)
 
-class Resource(resource.Resource):
-    def getChild(self, name, request):
-        # type: (str, server.Request) -> resource.Resource
+def transform_url(protocol, host, path, query):
+    proxy_port = 9991
+    if host.startswith('localhost:' + str(proxy_port)):
+        host = 'localhost'
 
-        # Assume an HTTP 1.1 request
-        proxy_host = request.requestHeaders.getRawHeaders('Host')
-        request.requestHeaders.setRawHeaders('X-Forwarded-Host', proxy_host)
+    if (path in ['/json/get_events'] or
+        path.startswith('/json/events') or
+        path.startswith('/api/v1/events') or
+        path.startswith('/sockjs')):
+        host = '127.0.0.1:' + str(tornado_port)
 
-        if (request.uri in ['/json/get_events'] or
-            request.uri.startswith('/json/events') or
-            request.uri.startswith('/api/v1/events') or
-            request.uri.startswith('/sockjs')):
-            return proxy.ReverseProxyResource('127.0.0.1', tornado_port, '/'+name)
+    elif (path.startswith('/webpack') or
+          path.startswith('/socket.io')):
+        host = '127.0.0.1:' + str(webpack_port)
 
-        elif (request.uri.startswith('/webpack') or
-              request.uri.startswith('/socket.io')):
-            return proxy.ReverseProxyResource('127.0.0.1', webpack_port, '/'+name)
+    else:
+        host = '127.0.0.1:' + str(django_port)
 
-        return proxy.ReverseProxyResource('127.0.0.1', django_port, '/'+name)
+    newpath = urlunparse((protocol, host, path, '', query, ''))
+    return newpath
+
+class ReverseProxyHandler(RequestHandler):
+    def get(self): pass
+    def head(self): pass
+    def post(self): pass
+    def put(self): pass
+    def patch(self): pass
+    def options(self): pass
+    def delete(self): pass
+
+    def prepare(self):
+        request_body = None if self.request.method.lower() == "get" else self.request.body
+        request = HTTPRequest(
+            url=transform_url(
+                self.request.protocol,
+                self.request.host,
+                self.request.path,
+                self.request.query),
+            method=self.request.method,
+            headers=self.request.headers,
+            follow_redirects=True,
+            body=request_body)
+
+        proxy_host = request.headers.get('Host')
+        self.set_header('X-Forwarded-Host', proxy_host)
+        response = HTTPClient().fetch(request)
+        print(response.headers, "HEADERS")
+
+        self.set_status(response.code)
+        self.write(response.body)
+        for k, v in response.headers.get_all():
+            if k != 'Content-Length':
+                self.add_header(k, v)
+
 
 try:
-    reactor.listenTCP(proxy_port, server.Site(Resource()), interface=options.interface)
-    reactor.run()
-except:
+    rproxy_app = Application([
+        (r".*", ReverseProxyHandler),
+    ], debug=True)
+    rproxy_app.listen(proxy_port, xheaders=True)
+    print("Reverse Proxy Started")
+    IOLoop.instance().start()
+except KeyboardInterrupt:
+    print("\nExiting Tornado", file=sys.stderr)
     # Print the traceback before we get SIGTERM and die.
     traceback.print_exc()
     raise
+
+# class Resource(resource.Resource):
+#     def getChild(self, name, request):
+#         # type: (str, server.Request) -> resource.Resource
+#
+#         # Assume an HTTP 1.1 request
+#         proxy_host = request.requestHeaders.getRawHeaders('Host')
+#         print("PROXY_HOST\n", proxy_host )
+#         request.requestHeaders.setRawHeaders('X-Forwarded-Host', proxy_host)
+#         print(request.requestHeaders, "HEADERS\n")
+#
+#         if (request.uri in ['/json/get_events'] or
+#             request.uri.startswith('/json/events') or
+#             request.uri.startswith('/api/v1/events') or
+#             request.uri.startswith('/sockjs')):
+#             return proxy.ReverseProxyResource('127.0.0.1', tornado_port, '/'+name)
+#
+#         elif (request.uri.startswith('/webpack') or
+#               request.uri.startswith('/socket.io')):
+#             return proxy.ReverseProxyResource('127.0.0.1', webpack_port, '/'+name)
+#
+#         return proxy.ReverseProxyResource('127.0.0.1', django_port, '/'+name)
+#
+# try:
+#     reactor.listenTCP(proxy_port, server.Site(Resource()), interface=options.interface)
+#     print(proxy_port, "PROXY PORT USED BY REACTOR")
+#     reactor.run()
+# except:
+#     # Print the traceback before we get SIGTERM and die.
+#     traceback.print_exc()
+#     raise
 finally:
     # Kill everything in our process group.
     os.killpg(0, signal.SIGTERM)
