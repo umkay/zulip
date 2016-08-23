@@ -30,7 +30,7 @@ from django.conf import settings
 from zerver.lib.avatar  import gravatar_hash
 from zerver.lib.bugdown import codehilite
 from zerver.lib.bugdown import fenced_code
-from zerver.lib.bugdown.fenced_code import FENCE_RE
+from zerver.lib.bugdown.fenced_code import FENCED_BLOCK_RE
 from zerver.lib.camo import get_camo_url
 from zerver.lib.timeout import timeout, TimeoutExpired
 from zerver.lib.cache import cache_with_key, cache_get_many, cache_set_many
@@ -784,7 +784,7 @@ class BugdownUListPreprocessor(markdown.preprocessors.Preprocessor):
         copy = lines[:]
         for i in range(len(lines) - 1):
             # Ignore anything that is inside a fenced code block
-            m = FENCE_RE.match(lines[i])
+            m = FENCED_BLOCK_RE.match(lines[i])
             if not fence and m:
                 fence = m.group('fence')
             elif fence and m and fence == m.group('fence'):
@@ -1042,17 +1042,25 @@ class Bugdown(markdown.Extension):
 md_engines = {}
 realm_filter_data = {} # type: Dict[text_type, List[Tuple[text_type, text_type]]]
 
+class EscapeHtml(markdown.Extension):
+    def extendMarkdown(self, md, md_globals):
+        # type: (markdown.Markdown, Dict[str, Any]) -> None
+        del md.preprocessors['html_block']
+        del md.inlinePatterns['html']
+
 def make_md_engine(key, opts):
     # type: (text_type, Dict[str, Any]) -> None
     md_engines[key] = markdown.Markdown(
-        safe_mode     = 'escape',
         output_format = 'html',
-        extensions    = ['nl2br',
+        extensions    = [
+                        'nl2br',
                          'tables',
-                         codehilite.makeExtension(configs=[
-                    ('force_linenos', False),
-                    ('guess_lang',    False)]),
+                         codehilite.makeExtension(
+                                linenums=False,
+                                guess_lang=False
+                         ),
                          fenced_code.makeExtension(),
+                         EscapeHtml(),
                          Bugdown(opts)])
 
 def subject_links(domain, subject):

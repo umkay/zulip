@@ -2,14 +2,19 @@
 # Django itself; we use a slightly patched version
 git+https://github.com/zulip/truncated-django.git
 
-GitPython==0.3.2.1
+GitPython==2.0.8
 
 # Needed for rendering backend templates
 Jinja2==2.8
 
 # Needed for markdown processing
-Markdown==2.1.1
+Markdown==2.6.6
 MarkupSafe==0.23
+bleach==1.4.3
+
+# Needed for bleach
+html5lib == 0.9999999
+
 
 # Needed for Image Processing
 Pillow==3.3.0

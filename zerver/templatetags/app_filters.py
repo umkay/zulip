@@ -48,9 +48,10 @@ def render_markdown_path(markdown_file_path):
     Given a path to a markdown file, return the rendered html
     """
     import markdown
+    from zerver.lib.bugdown import EscapeHtml
     def path_to_html(path):
         markdown_string = open(path).read()
-        return markdown.markdown(markdown_string, safe_mode='escape')
+        return markdown.markdown(markdown_string, extensions=EscapeHtml())
 
     html = memoize(path_to_html, memoize_cache, 1)(markdown_file_path)
     return mark_safe(html)
