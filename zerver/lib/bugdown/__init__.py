@@ -30,7 +30,7 @@ from django.conf import settings
 from zerver.lib.avatar  import gravatar_hash
 from zerver.lib.bugdown import codehilite
 from zerver.lib.bugdown import fenced_code
-from zerver.lib.bugdown.fenced_code import FENCED_BLOCK_RE
+from zerver.lib.bugdown.fenced_code import FENCE_RE
 from zerver.lib.camo import get_camo_url
 from zerver.lib.timeout import timeout, TimeoutExpired
 from zerver.lib.cache import cache_with_key, cache_get_many, cache_set_many
@@ -784,7 +784,7 @@ class BugdownUListPreprocessor(markdown.preprocessors.Preprocessor):
         copy = lines[:]
         for i in range(len(lines) - 1):
             # Ignore anything that is inside a fenced code block
-            m = FENCED_BLOCK_RE.match(lines[i])
+            m = FENCE_RE.match(lines[i])
             if not fence and m:
                 fence = m.group('fence')
             elif fence and m and fence == m.group('fence'):
@@ -918,6 +918,15 @@ class AtomicLinkPattern(LinkPattern):
         return ret
 
 class Bugdown(markdown.Extension):
+    def __init__(self, *args, **kwargs):
+        # define default configs
+        self.config = {
+            "realm_filters": ['filters', "Realm-specific filters for domain"],
+             "realm": ['domain', "Realm name"]
+        }
+
+        super(Bugdown, self).__init__(*args, **kwargs)
+
     def extendMarkdown(self, md, md_globals):
         # type: (markdown.Markdown, Dict[str, Any]) -> None
         del md.preprocessors['reference']
@@ -1061,7 +1070,8 @@ def make_md_engine(key, opts):
                          ),
                          fenced_code.makeExtension(),
                          EscapeHtml(),
-                         Bugdown(opts)])
+                         Bugdown(realm_filters=opts["realm_filters"][0],
+                                 realm=opts["realm"][0])])
 
 def subject_links(domain, subject):
     # type: (text_type, text_type) -> List[text_type]
