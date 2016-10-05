@@ -178,6 +178,7 @@ DEFAULT_SETTINGS = {'TWITTER_CONSUMER_KEY': '',
                     'SYSTEM_ONLY_REALMS': {"zulip.com"},
                     'FIRST_TIME_TOS_TEMPLATE': None,
                     'USING_PGROONGA': False,
+                    'ANALYTICS_ENABLED': True
                     }
 
 for setting_name, setting_val in six.iteritems(DEFAULT_SETTINGS):
@@ -336,6 +337,7 @@ INSTALLED_APPS = [
     'guardian',
     'pipeline',
     'zerver',
+    'analytics',
 ]
 if USING_PGROONGA:
     INSTALLED_APPS += ['pgroonga']
@@ -1009,6 +1011,13 @@ if POPULATE_PROFILE_VIA_LDAP and \
     AUTHENTICATION_BACKENDS += ('zproject.backends.ZulipLDAPUserPopulator',)
 else:
     POPULATE_PROFILE_VIA_LDAP = 'zproject.backends.ZulipLDAPAuthBackend' in AUTHENTICATION_BACKENDS or POPULATE_PROFILE_VIA_LDAP
+
+########################################################################
+# ANALYTICS SETTINGS
+########################################################################
+
+if PRODUCTION:
+    ANALYTICS_ENABLED = True
 
 ########################################################################
 # GITHUB AUTHENTICATION SETTINGS
