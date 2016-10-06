@@ -11,10 +11,15 @@ from typing import Any
 
 CLEAR_QUERY = """
 DELETE FROM ONLY analytics_installationcount;
+ALTER SEQUENCE analytics_installation_id_seq RESTART WITH 1;
 DELETE FROM ONLY analytics_realmcount;
+ALTER SEQUENCE analytics_realmcount_id_seq RESTART WITH 1;
 DELETE FROM ONLY analytics_usercount;
+ALTER SEQUENCE analytics_usercount_id_seq RESTART WITH 1;
 DELETE FROM ONLY analytics_streamcount;
+ALTER SEQUENCE analytics_streamcount_id_seq RESTART WITH 1;
 DELETE FROM ONLY analytics_huddlecount
+ALTER SEQUENCE analytics_huddlecount_id_seq RESTART WITH 1;
 """
 
 class Command(BaseCommand):
