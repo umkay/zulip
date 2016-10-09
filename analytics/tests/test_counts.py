@@ -6,16 +6,17 @@ from analytics.lib.interval import TimeInterval
 from analytics.lib.counts import CountStat, COUNT_STATS, process_count_stat, \
     zerver_count_user_by_realm, zerver_count_message_by_user, \
     zerver_count_message_by_stream, zerver_count_stream_by_realm, \
-    zerver_count_message_by_huddle
+    zerver_count_message_by_huddle, ZerverCountQuery
 from analytics.models import BaseCount, InstallationCount, RealmCount, \
     UserCount, StreamCount
 
 from zerver.models import Realm, UserProfile, Message, Stream, Recipient, \
     get_user_profile_by_email, get_client
+from zerver.lib.test_runner import slow
 
 from datetime import datetime, timedelta
 
-from typing import Any, Type, Optional
+from typing import Any, Type, Optional, Tuple
 from six import text_type
 
 class AnalyticsTestCase(TestCase):
@@ -133,6 +134,71 @@ class TestUpdateAnalyticsCounts(AnalyticsTestCase):
         self.assertCountEquals(UserCount, 'test_messages_sent', 1, user = user1)
 
 class TestProcessCountStat(AnalyticsTestCase):
+
+    def assertRowCountsWithProperty(self, property, installation_rows, realm_rows,
+                                    user_rows, stream_rows):
+        # type: (text_type, int, int, int, int) -> None
+        self.assertEqual(InstallationCount.objects.filter(property=property).count(), installation_rows)
+        self.assertEqual(RealmCount.objects.filter(property=property).count(), realm_rows)
+        self.assertEqual(UserCount.objects.filter(property=property).count(), user_rows)
+        self.assertEqual(StreamCount.objects.filter(property=property).count(), stream_rows)
+
+    # TODO: check if this is actually slow once we have indexes on the analytics tables
+    @slow("Inserts ~1000 rows over the course of the test.")
+    def test_propagation(self):
+        # type: () -> None
+        # In these tests we assume the aggregate functions are each putting
+        # the right values in the tables, and are only checking that the
+        # control flow in process_count_stat is correct.
+        # We fix frequency = 'hour' instead of testing both 'hour' and 'day' in this test,
+        # since process_count_stat has no conditionals based on frequency
+
+        def gen_fake_stat(analytics_table, smallest_interval):
+            # type: (Type[BaseCount], str) -> CountStat
+            property = 'test_%s_%s' % (analytics_table._meta.db_table, smallest_interval)
+            zerver_count_query = ZerverCountQuery(models.Model, analytics_table, '')
+            return CountStat(property, zerver_count_query, {}, smallest_interval, 'hour')
+
+        user = self.create_user('email')
+        stream = self.create_stream()
+        def add_25_rows(stat):
+            # type: (CountStat) -> None
+            args = {'property': stat.property, 'interval': stat.smallest_interval, 'value': 1,
+                    'realm': self.default_realm}
+            table = stat.zerver_count_query.analytics_table
+            if table == UserCount:
+                args['user'] = user
+            if table == StreamCount:
+                args['stream'] = stream
+            table.objects.bulk_create([table(end_time = self.TIME_ZERO - i*self.HOUR, **args)
+                                       for i in range(25)])
+
+        # TODO: replace the 50s below by 27s once do_aggregate_hour_to_day is fixed.
+        # The 27's below for smallest_interval = 'hour' are 25 'hour' intervals,
+        # plus 2 'day' intervals added by do_aggregate_hour_to_day
+        row_counts = {
+            # (analytics_table, smallest_interval): (installation_rows, realm_rows, user_rows, stream_rows)
+            (RealmCount, 'hour') : (50, 50, 0, 0),
+            (RealmCount, 'day') : (25, 25, 0, 0),
+            (RealmCount, 'gauge'): (25, 25, 0, 0),
+            (UserCount, 'hour') : (50, 50, 50, 0),
+            (UserCount, 'day') : (25, 25, 25, 0),
+            (UserCount, 'gauge'): (25, 25, 25, 0),
+            (StreamCount, 'hour') : (50, 50, 0, 50),
+            (StreamCount, 'day') : (25, 25, 0, 25),
+            (StreamCount, 'gauge'): (25, 25, 0, 25)
+        } # type: Dict[Tuple[Type[BaseCount], str], Tuple[int, int, int, int]]
+
+        for params, answer in row_counts.items():
+            analytics_table, smallest_interval = params
+            stat = gen_fake_stat(analytics_table, smallest_interval)
+            add_25_rows(stat)
+            # TODO: change to
+            #  process_count_stat(stat, self.TIME_ZERO - 25*self.HOUR, self.TIME_ZERO + self.HOUR, True)
+            # once the do_aggregate_* functions are handling non-existent rows correctly
+            process_count_stat(stat, self.TIME_ZERO - 24*self.HOUR, self.TIME_ZERO, True)
+            self.assertRowCountsWithProperty(stat.property, *answer)
+
     # test users added in last hour
     def test_add_new_users(self):
         # type: () -> None
