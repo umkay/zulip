@@ -26,11 +26,15 @@ class ZerverCountQuery(object):
         self.analytics_table = analytics_table
         self.query = query
 
-def process_count_stat(stat, range_start, range_end):
-    # type: (CountStat, datetime, datetime) -> None
+# With aggregation_only = True, will not touch any zerver tables. This is
+# primarily used for testing at the moment.
+def process_count_stat(stat, range_start, range_end, aggregation_only = False):
+    # type: (CountStat, datetime, datetime, bool) -> None
     # stats that hit the prod database
-    for time_interval in timeinterval_range(range_start, range_end, stat.smallest_interval, stat.frequency):
-        do_pull_from_zerver(stat, time_interval)
+    if not aggregation_only:
+        for time_interval in timeinterval_range(range_start, range_end,
+                                                stat.smallest_interval, stat.frequency):
+            do_pull_from_zerver(stat, time_interval)
 
     # aggregate hour to day
     for time_interval in timeinterval_range(range_start, range_end, 'day', stat.frequency):
@@ -92,6 +96,8 @@ def do_aggregate_to_summary_table(stat, time_interval):
     cursor.execute(query, {'end_time': time_interval.end})
     cursor.close()
 
+# TODO: Don't aggregate to day when we have fewer than 24 corresponding hour rows.
+# Once fixed, update the test_propagation test.
 def do_aggregate_hour_to_day(stat, time_interval):
     # type: (CountStat, TimeInterval) -> None
     table = stat.zerver_count_query.analytics_table
