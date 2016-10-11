@@ -228,28 +228,10 @@ count_stream_by_realm_query = """
 """
 zerver_count_stream_by_realm = ZerverCountQuery(Stream, RealmCount, count_stream_by_realm_query)
 
-count_message_by_huddle_query = """
-    INSERT INTO analytics_huddlecount
-        (huddle_id, user_id, value, property, end_time, interval)
-    SELECT
-        zerver_message.recipient_id, zerver_message.sender_id, count(*), '%(property)s', %%(time_end)s, '%(interval)s'
-    FROM zerver_message
-    INNER JOIN zerver_recipient
-    ON
-    (
-        zerver_recipient.type = 3 AND
-        zerver_message.recipient_id = zerver_recipient.id AND
-        zerver_message.pub_date >= %%(time_start)s AND
-        zerver_message.pub_date < %%(time_end)s
-        %(join_args)s
-    )
-    GROUP BY zerver_message.recipient_id, zerver_message.sender_id
-"""
-zerver_count_message_by_huddle = ZerverCountQuery(Message, HuddleCount, count_message_by_huddle_query)
-
 COUNT_STATS = {
     'active_humans': CountStat('active_humans', zerver_count_user_by_realm,
                                {'is_bot': False, 'is_active': True}, 'gauge', 'day'),
     'active_bots': CountStat('active_bots', zerver_count_user_by_realm,
                              {'is_bot': True, 'is_active': True}, 'gauge', 'day'),
-    'messages_sent': CountStat('messages_sent', zerver_count_message_by_user, {}, 'hour', 'hour')}
+    'messages_sent': CountStat('messages_sent', zerver_count_message_by_user, {}, 'hour', 'hour'),
+    'public_streams': CountStat('public_streams', zerver_count_stream_by_realm, {'invite_only': False}, 'hour', 'hour')}
