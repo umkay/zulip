@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+
 from django.db import models
 from django.test import TestCase
 from django.utils import timezone
@@ -18,6 +20,7 @@ from datetime import datetime, timedelta
 
 from typing import Any, Type, Optional, Tuple
 from six import text_type
+from six.moves import range
 
 class AnalyticsTestCase(TestCase):
     MINUTE = timedelta(seconds = 60)
@@ -138,6 +141,7 @@ class TestProcessCountStat(AnalyticsTestCase):
     def assertRowCountsWithProperty(self, property, installation_rows, realm_rows,
                                     user_rows, stream_rows):
         # type: (text_type, int, int, int, int) -> None
+        # filter by default realm once aggregation of empty rows in realmcount is implemented
         self.assertEqual(InstallationCount.objects.filter(property=property).count(), installation_rows)
         self.assertEqual(RealmCount.objects.filter(property=property).count(), realm_rows)
         self.assertEqual(UserCount.objects.filter(property=property).count(), user_rows)
