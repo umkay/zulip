@@ -44,7 +44,6 @@ def process_count_stat(stat, range_start, range_end, aggregation_only = False):
     # aggregate to summary tables
     for interval in ['hour', 'day', 'gauge']:
         for time_interval in timeinterval_range(range_start, range_end, interval, stat.frequency):
-            analytics_table = stat.zerver_count_query.analytics_table
             if stat.smallest_interval in subintervals(interval):
                 do_aggregate_to_summary_table(stat, time_interval)
 
@@ -54,12 +53,13 @@ def do_aggregate_to_summary_table(stat, time_interval):
                                         end_time = time_interval.end,
                                         interval = time_interval.interval).exists():
         return
+
     cursor = connection.cursor()
 
     # Aggregate into RealmCount
     analytics_table = stat.zerver_count_query.analytics_table
     if analytics_table in (UserCount, StreamCount):
-        query = """
+        realmcount_query = """
             INSERT INTO analytics_realmcount
                 (realm_id, value, property, end_time, interval)
             SELECT
@@ -77,10 +77,11 @@ def do_aggregate_to_summary_table(stat, time_interval):
         """ % {'analytics_table' : analytics_table._meta.db_table,
                'property' : stat.property,
                'interval' : time_interval.interval}
-        cursor.execute(query, {'end_time': time_interval.end})
+
+        cursor.execute(realmcount_query, {'end_time': time_interval.end})
 
     # Aggregate into InstallationCount
-    query = """
+    installationcount_query = """
        INSERT INTO analytics_installationcount
            (value, property, end_time, interval)
        SELECT
@@ -93,7 +94,8 @@ def do_aggregate_to_summary_table(stat, time_interval):
        )
    """ % {'property': stat.property,
           'interval': time_interval.interval}
-    cursor.execute(query, {'end_time': time_interval.end})
+
+    cursor.execute(installationcount_query, {'end_time': time_interval.end})
     cursor.close()
 
 # TODO: Don't aggregate to day when we have fewer than 24 corresponding hour rows.
