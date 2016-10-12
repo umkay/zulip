@@ -69,4 +69,12 @@
     {% endfor %}
     </tbody>
 
+        <table>
+            {# Messages sent #}
+            {% if messages %}
+                {{ messages|safe }}
+            {% else %}
+                <td colspan=8></td>
+            {% endif %}
+        </table>
 </table>

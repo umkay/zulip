@@ -3,7 +3,12 @@ from __future__ import division
 from six import text_type
 from typing import Any, Dict, List, Tuple, Optional, Sequence, Callable, Union
 
+from analytics.lib.counts import CountStat, process_count_stat, zerver_count_stream_by_realm, \
+    zerver_count_message_by_user, zerver_count_message_by_stream, zerver_count_user_by_realm
+from analytics.models import RealmCount, StreamCount, InstallationCount, UserCount
+
 from django.db import connection
+from django.utils import timezone
 from django.db.models.query import QuerySet
 from django.template import RequestContext, loader
 from django.core import urlresolvers
@@ -217,6 +222,9 @@ def realm_summary_table(realm_minutes):
     rows = dictfetchall(cursor)
     cursor.close()
 
+    # messages sent for realm by day
+    messages = sent_messages_report('zulip.com')
+
     # get messages sent per day
     counts = get_realm_day_counts()
     for row in rows:
@@ -272,7 +280,7 @@ def realm_summary_table(realm_minutes):
 
     content = loader.render_to_string(
         'analytics/realm_summary_table.html',
-        dict(rows=rows, num_active_sites=num_active_sites)
+        dict(rows=rows, num_active_sites=num_active_sites, messages=messages)
     )
     return content
 
@@ -332,67 +340,57 @@ def sent_messages_report(realm):
     # type: (str) -> str
     title = 'Recently sent messages for ' + realm
 
+    realm = get_realm(realm)
     cols = [
         'Date',
         'Humans',
         'Bots'
     ]
 
-    query = '''
-        select
-            series.day::date,
-            humans.cnt,
-            bots.cnt
-        from (
-            select generate_series(
-                (now()::date - interval '2 week'),
-                now()::date,
-                interval '1 day'
-            ) as day
-        ) as series
-        left join (
-            select
-                pub_date::date pub_date,
-                count(*) cnt
-            from zerver_message m
-            join zerver_userprofile up on up.id = m.sender_id
-            join zerver_realm r on r.id = up.realm_id
-            where
-                r.domain = %s
-            and
-                (not up.is_bot)
-            and
-                pub_date > now() - interval '2 week'
-            group by
-                pub_date::date
-            order by
-                pub_date::date
-        ) humans on
-            series.day = humans.pub_date
-        left join (
-            select
-                pub_date::date pub_date,
-                count(*) cnt
-            from zerver_message m
-            join zerver_userprofile up on up.id = m.sender_id
-            join zerver_realm r on r.id = up.realm_id
-            where
-                r.domain = %s
-            and
-                up.is_bot
-            and
-                pub_date > now() - interval '2 week'
-            group by
-                pub_date::date
-            order by
-                pub_date::date
-        ) bots on
-            series.day = bots.pub_date
-    '''
-    cursor = connection.cursor()
-    cursor.execute(query, [realm, realm])
-    rows = cursor.fetchall()
-    cursor.close()
+    stats = [
+        CountStat('human_messages', zerver_count_message_by_user, {},
+                  {'is_active': True, 'is_bot': False}, 'day', 'day'),
+        CountStat('bot_messages', zerver_count_message_by_user, {},
+                  {'is_active': True, 'is_bot': True}, 'day', 'day')]
+
+    today = datetime.today().replace(tzinfo=timezone.utc) + timedelta(days=1)
+    two_weeks_ago = (datetime.today() - timedelta(days=7)).replace(tzinfo=timezone.utc)
+
+    for stat in stats:
+        process_count_stat(stat, two_weeks_ago, today)
+
+    realmcount_human_table = RealmCount.objects.values('end_time', 'value').\
+        filter(interval='day', realm=realm, property='human_messages')
+
+    realmcount_bot_table = RealmCount.objects.values('end_time', 'value'). \
+        filter(interval='day', realm=realm, property='bot_messages')
+
+    realm_dict = {}
+
+
+    for row in realmcount_human_table:
+        realm_dict[row['end_time']] = [(row['end_time'])]
+        realm_dict[row['end_time']].append(row['value'])
+
+    for row in realmcount_bot_table:
+        realm_dict[row['end_time']].append(row['value'])
+
+    rows = []
+
+    for row in realm_dict.values():
+        rows.append(row)
+    rows = sorted(rows)
+
+    # should clean this up
+    i = len(rows) - 1
+    for row in rows:
+        if i == 0:
+            row[0] = "Today"
+        elif i == 1:
+            row[0] = "{} Day Ago".format(i)
+        else:
+            row[0] = "{} Days Ago".format(i)
+        i -= 1
 
     return make_table(title, cols, rows)
 
