@@ -36,8 +36,8 @@ class CountStat(object):
     # Allowed intervals are HOUR, DAY, and, GAUGE
     GAUGE = 'gauge'
 
-    def __init__(self, property, zerver_count_query, filter_args, frequency, is_gauge):
-        # type: (text_type, ZerverCountQuery, Dict[str, bool], str, bool) -> None
+    def __init__(self, property, zerver_count_query, filter_args, frequency, is_gauge, extra_table, extra_table_args):
+        # type: (text_type, ZerverCountQuery, Dict[str, bool], str, bool, models.Model) -> None
         self.property = property
         self.zerver_count_query = zerver_count_query
         # might have to do something different for bitfields
@@ -46,6 +46,9 @@ class CountStat(object):
             raise ValueError("Unknown frequency: %s" % (frequency,))
         self.frequency = frequency
         self.interval = self.GAUGE if is_gauge else frequency
+        #for summary table only
+        self.extra_table = extra_table
+        self.extra_table_args = extra_table_args
 
 class ZerverCountQuery(object):
     def __init__(self, zerver_table, analytics_table, query):
@@ -115,6 +118,10 @@ def do_aggregate_to_summary_table(stat, end_time, interval):
     # type: (CountStat, datetime, str) -> None
     cursor = connection.cursor()
 
+
+    extra_args = ' '.join('AND %s.%s = %s' % (stat.extra_table, key, value) \
+                         for key, value in stat.extra_table_args.items())
+
     # Aggregate into RealmCount
     analytics_table = stat.zerver_count_query.analytics_table
     if analytics_table in (UserCount, StreamCount):
@@ -124,7 +131,7 @@ def do_aggregate_to_summary_table(stat, end_time, interval):
             SELECT
                 zerver_realm.id, COALESCE(sum(%(analytics_table)s.value), 0), '%(property)s', %%(end_time)s, '%(interval)s'
             FROM zerver_realm
-            LEFT JOIN %(analytics_table)s
+            JOIN %(analytics_table)s
             ON
             (
                 %(analytics_table)s.realm_id = zerver_realm.id AND
@@ -132,11 +139,18 @@ def do_aggregate_to_summary_table(stat, end_time, interval):
                 %(analytics_table)s.end_time = %%(end_time)s AND
                 %(analytics_table)s.interval = '%(interval)s'
             )
+            JOIN %(extra_table)s
+            ON (
+              %(extra_table)s.realm_id = zerver_realm.id
+              %(extra_args)s
+            )
             GROUP BY zerver_realm.id
         """ % {'analytics_table' : analytics_table._meta.db_table,
                'property' : stat.property,
-               'interval' : interval}
-
+               'interval' : interval,
+               'extra_table': stat.extra_table,
+               'extra_args': extra_args
+               }
         start = time.time()
         cursor.execute(realmcount_query, {'end_time': end_time})
         end = time.time()
@@ -271,8 +285,7 @@ count_stream_by_realm_query = """
 zerver_count_stream_by_realm = ZerverCountQuery(Stream, RealmCount, count_stream_by_realm_query)
 
 COUNT_STATS = {
-    'active_humans': CountStat('active_humans', zerver_count_user_by_realm,
-                               {'is_bot': False, 'is_active': True}, CountStat.DAY, True),
-    'active_bots': CountStat('active_bots', zerver_count_user_by_realm,
-                             {'is_bot': True, 'is_active': True}, CountStat.DAY, True),
-    'messages_sent': CountStat('messages_sent', zerver_count_message_by_user, {}, CountStat.HOUR, False)}
+    'messages_sent_humans': CountStat('messages_sent_humans', zerver_count_message_by_user, {}, CountStat.HOUR, False,
+                               'zerver_userprofile', {'is_bot': False}),
+
+}
