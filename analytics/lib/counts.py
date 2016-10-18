@@ -36,9 +36,10 @@ class CountStat(object):
     # Allowed intervals are HOUR, DAY, and, GAUGE
     GAUGE = 'gauge'
 
-    def __init__(self, property, zerver_count_query, filter_args, frequency, is_gauge):
-        # type: (text_type, ZerverCountQuery, Dict[str, bool], str, bool) -> None
+    def __init__(self, property, group_bys, zerver_count_query, filter_args, frequency, is_gauge):
+        # type: (text_type, [text_type], ZerverCountQuery, Dict[str, bool], str, bool) -> None
         self.property = property
+        self.group_bys = group_bys
         self.zerver_count_query = zerver_count_query
         # might have to do something different for bitfields
         self.filter_args = filter_args
@@ -174,13 +175,16 @@ def do_pull_from_zerver(stat, start_time, end_time, interval):
     zerver_table = stat.zerver_count_query.zerver_table._meta.db_table # type: ignore
     join_args = ' '.join('AND %s.%s = %s' % (zerver_table, key, value) \
                          for key, value in stat.filter_args.items())
+    group_bys = ' '.join('AND %s.%s' % (zerver_table, group_by) \
+                         for group_by in stat.group_bys)
     # We do string replacement here because passing join_args as a param
     # may result in problems when running cursor.execute; we do
     # the string formatting prior so that cursor.execute runs it as sql
     query_ = stat.zerver_count_query.query % {'zerver_table' : zerver_table,
                                               'property' : stat.property,
                                               'interval' : interval,
-                                              'join_args' : join_args}
+                                              'join_args' : join_args,
+                                              'group_bys' : group_bys}
     cursor = connection.cursor()
     start = time.time()
     cursor.execute(query_, {'time_start': start_time, 'time_end': end_time})
@@ -190,9 +194,9 @@ def do_pull_from_zerver(stat, start_time, end_time, interval):
 
 count_user_by_realm_query = """
     INSERT INTO analytics_realmcount
-        (realm_id, value, property, end_time, interval)
+        (realm_id, group_bys, value, property, end_time, interval)
     SELECT
-        zerver_realm.id, count(%(zerver_table)s),'%(property)s', %%(time_end)s, '%(interval)s'
+        zerver_realm.id, '%(group_bys)s', count(%(zerver_table)s),'%(property)s', %%(time_end)s, '%(interval)s'
     FROM zerver_realm
     LEFT JOIN zerver_userprofile
     ON
@@ -204,16 +208,16 @@ count_user_by_realm_query = """
     )
     WHERE
         zerver_realm.date_created < %%(time_end)s
-    GROUP BY zerver_realm.id
+    GROUP BY zerver_realm.id, %(group_bys)
 """
 zerver_count_user_by_realm = ZerverCountQuery(UserProfile, RealmCount, count_user_by_realm_query)
 
 # currently .sender_id is only Message specific thing
 count_message_by_user_query = """
     INSERT INTO analytics_usercount
-        (user_id, realm_id, value, property, end_time, interval)
+        (user_id, group_bys, realm_id, value, property, end_time, interval)
     SELECT
-        zerver_userprofile.id, zerver_userprofile.realm_id, count(*), '%(property)s', %%(time_end)s, '%(interval)s'
+        zerver_userprofile.id, '%(group_bys)', zerver_userprofile.realm_id, count(*), '%(property)s', %%(time_end)s, '%(interval)s'
     FROM zerver_userprofile
     JOIN zerver_message
     ON
@@ -225,7 +229,7 @@ count_message_by_user_query = """
     )
     WHERE
             zerver_userprofile.date_joined < %%(time_end)s
-    GROUP BY zerver_userprofile.id
+    GROUP BY zerver_userprofile.id, %(group_bys)
 """
 zerver_count_message_by_user = ZerverCountQuery(Message, UserCount, count_message_by_user_query)
 
@@ -271,8 +275,8 @@ count_stream_by_realm_query = """
 zerver_count_stream_by_realm = ZerverCountQuery(Stream, RealmCount, count_stream_by_realm_query)
 
 COUNT_STATS = {
-    'active_humans': CountStat('active_humans', zerver_count_user_by_realm,
+    'active_humans': CountStat('active_humans',[], zerver_count_user_by_realm,
                                {'is_bot': False, 'is_active': True}, CountStat.DAY, True),
-    'active_bots': CountStat('active_bots', zerver_count_user_by_realm,
+    'active_bots': CountStat('active_bots', [], zerver_count_user_by_realm,
                              {'is_bot': True, 'is_active': True}, CountStat.DAY, True),
-    'messages_sent': CountStat('messages_sent', zerver_count_message_by_user, {}, CountStat.HOUR, False)}
+    'messages_sent': CountStat('messages_sent', ['is_bot'], zerver_count_message_by_user, {}, CountStat.DAY, False)}

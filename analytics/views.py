@@ -3,6 +3,10 @@ from __future__ import division
 from six import text_type
 from typing import Any, Dict, List, Tuple, Optional, Sequence, Callable, Union
 
+from analytics.models import RealmCount, UserCount, StreamCount
+from analytics.lib.counts import CountStat, COUNT_STATS, process_count_stat
+
+from django.utils import timezone
 from django.db import connection
 from django.db.models.query import QuerySet
 from django.template import RequestContext, loader
@@ -71,8 +75,6 @@ def get_realm_day_counts():
             (not up.is_bot)
         and
             pub_date > now()::date - interval '8 day'
-        and
-            c.name not in ('zephyr_mirror', 'ZulipMonitoring')
         group by
             r.domain,
             age
@@ -332,68 +334,31 @@ def sent_messages_report(realm):
     # type: (str) -> str
     title = 'Recently sent messages for ' + realm
 
+    realm = get_realm('zulip.com')
+
     cols = [
         'Date',
         'Humans',
         'Bots'
     ]
 
-    query = '''
-        select
-            series.day::date,
-            humans.cnt,
-            bots.cnt
-        from (
-            select generate_series(
-                (now()::date - interval '2 week'),
-                now()::date,
-                interval '1 day'
-            ) as day
-        ) as series
-        left join (
-            select
-                pub_date::date pub_date,
-                count(*) cnt
-            from zerver_message m
-            join zerver_userprofile up on up.id = m.sender_id
-            join zerver_realm r on r.id = up.realm_id
-            where
-                r.domain = %s
-            and
-                (not up.is_bot)
-            and
-                pub_date > now() - interval '2 week'
-            group by
-                pub_date::date
-            order by
-                pub_date::date
-        ) humans on
-            series.day = humans.pub_date
-        left join (
-            select
-                pub_date::date pub_date,
-                count(*) cnt
-            from zerver_message m
-            join zerver_userprofile up on up.id = m.sender_id
-            join zerver_realm r on r.id = up.realm_id
-            where
-                r.domain = %s
-            and
-                up.is_bot
-            and
-                pub_date > now() - interval '2 week'
-            group by
-                pub_date::date
-            order by
-                pub_date::date
-        ) bots on
-            series.day = bots.pub_date
-    '''
-    cursor = connection.cursor()
-    cursor.execute(query, [realm, realm])
-    rows = cursor.fetchall()
-    cursor.close()
+    today = datetime.today().replace(tzinfo=timezone.utc) + timedelta(days=1)
+    # two_weeks_ago = (datetime.today() - timedelta(days=7)).replace(tzinfo=timezone.utc)
 
+    process_count_stat(COUNT_STATS['messages_sent'], today)
+    realm_dict = {}
+    table = RealmCount.objects.values().filter(realm=realm, property='messages_sent')
+    for row in table:
+        print row
+    for row in table:
+        realm_dict[row['end_time']] = [(row['end_time'])]
+        realm_dict[row['end_time']].append(row['value'])
+
+    rows = []
+
+    for row in realm_dict.values():
+        rows.append(row)
+    rows = sorted(rows)
     return make_table(title, cols, rows)
 
 def ad_hoc_queries():
