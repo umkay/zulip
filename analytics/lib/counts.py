@@ -5,7 +5,7 @@ from datetime import timedelta, datetime
 
 from analytics.models import InstallationCount, RealmCount, \
     UserCount, StreamCount, BaseCount, FillState, get_fill_state, installation_epoch
-from zerver.models import Realm, UserProfile, Message, Stream, models
+from zerver.models import Realm, UserProfile, Message, Stream, Recipient, models
 from zerver.lib.timestamp import floor_to_day
 
 from typing import Any, Optional, Type, Tuple
@@ -291,6 +291,45 @@ count_stream_by_realm_query = """
 """
 zerver_count_stream_by_realm = ZerverCountQuery(Stream, RealmCount, count_stream_by_realm_query)
 
+## The count_message_type_by_user query is nonstandard; we never pass in a subgroup column via the CountStat object.
+# Instead, the subgroup 'message_type' is obtained from the inner subquery.
+count_message_type_by_user_query = """
+INSERT INTO analytics_usercount
+        (realm_id, user_id, value, property, subgroup, end_time, interval)
+SELECT  realm_id, id, SUM(count) as total, 'message_type_by_user', message_type, %%(time_end)s, '%(interval)s'
+FROM(
+
+    SELECT
+    CASE WHEN
+              zerver_recipient.type != 2 THEN 'PM'
+         WHEN
+              zerver_stream.invite_only = FALSE THEN 'Public Stream'
+         WHEN
+              zerver_stream.invite_only = TRUE THEN 'Private Stream'
+         END
+    message_type, zerver_userprofile.realm_id, zerver_userprofile.id, count(*)
+
+    FROM zerver_userprofile
+
+    JOIN zerver_message
+    ON
+        zerver_message.sender_id = zerver_userprofile.id
+        %(join_args)s
+
+    JOIN zerver_recipient
+    ON
+        zerver_recipient.id = zerver_message.recipient_id
+    JOIN zerver_stream
+    ON
+        zerver_stream.id = zerver_recipient.type_id
+    WHERE
+        zerver_userprofile.date_joined < %%(time_end)s
+    GROUP BY zerver_userprofile.realm_id, zerver_userprofile.id, zerver_recipient.type, zerver_stream.invite_only
+) AS total_types
+GROUP BY message_type, realm_id, id
+"""
+zerver_count_message_type_by_user = ZerverCountQuery(Message, UserCount, count_message_type_by_user_query)
+
 COUNT_STATS = {
     'active_humans': CountStat('active_humans', zerver_count_user_by_realm,
                                {'is_bot': False, 'is_active': True}, None, CountStat.DAY, True),
@@ -299,4 +338,6 @@ COUNT_STATS = {
     'messages_sent': CountStat('messages_sent', zerver_count_message_by_user, {}, None,
                                CountStat.HOUR, False),
     'messages_by_is_bot': CountStat('messages_by_is_bot', zerver_count_message_by_user, {}, (UserProfile, 'is_bot'),
-                               CountStat.DAY, False)}
+                               CountStat.DAY, False),
+    'message_type_by_user': CountStat('message_type_by_user', zerver_count_message_type_by_user, {},
+                                      None, CountStat.DAY, False)}
