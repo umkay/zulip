@@ -276,7 +276,19 @@ zerver_count_stream_by_realm = ZerverCountQuery(Stream, RealmCount, count_stream
 
 COUNT_STATS = {
     'active_humans': CountStat('active_humans', zerver_count_user_by_realm,
-                               {'is_bot': False, 'is_active': True}, CountStat.DAY, True),
+                               {'is_bot': False, 'is_active': True}, None, CountStat.DAY, True),
     'active_bots': CountStat('active_bots', zerver_count_user_by_realm,
-                             {'is_bot': True, 'is_active': True}, CountStat.DAY, True),
-    'messages_sent': CountStat('messages_sent', zerver_count_message_by_user, {}, CountStat.HOUR, False)}
+                             {'is_bot': True, 'is_active': True}, None, CountStat.DAY, True),
+    'messages_sent': CountStat('messages_sent', zerver_count_message_by_user, {}, None,
+                               CountStat.HOUR, False),
+    'messages_by_is_bot': CountStat('messages_by_is_bot', zerver_count_message_by_user, {}, (UserProfile, 'is_bot'),
+                               CountStat.DAY, False),
+    'message_type_by_user': CountStat('message_type_by_user', zerver_count_message_type_by_user, {},
+                                      None, CountStat.DAY, False),
+    'messages_by_client': CountStat('messages_by_client', zerver_count_message_by_user, {},
+                                         (Message, 'sending_client_id'), CountStat.HOUR, False),
+    'messages_by_humans_by_stream': CountStat('messages_by_humans_by_stream', zerver_count_message_by_stream,
+                                              {'is_bot': False}, None, CountStat.HOUR, False),
+    'messages_by_bots_by_stream': CountStat('messages_by_bot_by_stream', zerver_count_message_by_stream,
+                                            {'is_bot': True}, None, CountStat.HOUR, False),
+    }
