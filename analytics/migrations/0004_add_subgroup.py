@@ -31,4 +31,21 @@ class Migration(migrations.Migration):
             name='subgroup',
             field=models.CharField(max_length=16, null=True),
         ),
+
+        migrations.AlterUniqueTogether(
+            name='installationcount',
+            unique_together=set([('property', 'end_time', 'interval', 'subgroup')]),
+        ),
+        migrations.AlterUniqueTogether(
+            name='realmcount',
+            unique_together=set([('realm', 'property', 'end_time', 'interval', 'subgroup')]),
+        ),
+        migrations.AlterUniqueTogether(
+            name='streamcount',
+            unique_together=set([('stream', 'property', 'end_time', 'interval', 'subgroup')]),
+        ),
+        migrations.AlterUniqueTogether(
+            name='usercount',
+            unique_together=set([('user', 'property', 'end_time', 'interval', 'subgroup')]),
+        ),
     ]
