@@ -101,7 +101,6 @@ def do_fill_count_stat_at_hour(stat, end_time):
         start_time = end_time - timedelta(days = 1)
     else: # stat.interval == CountStat.GAUGE
         start_time = MIN_TIME
-
     do_pull_from_zerver(stat, start_time, end_time, stat.interval)
     do_aggregate_to_summary_table(stat, end_time, stat.interval)
 
@@ -190,6 +189,7 @@ def do_pull_from_zerver(stat, start_time, end_time, interval):
     start = time.time()
     cursor.execute(query_, {'time_start': start_time, 'time_end': end_time})
     end = time.time()
+    print(cursor.query)
     logger.info("%s do_pull_from_zerver (%dms/%sr)" % (stat.property, (end-start)*1000, cursor.rowcount))
     cursor.close()
 
@@ -279,6 +279,35 @@ count_stream_by_realm_query = """
 """
 zerver_count_stream_by_realm = ZerverCountQuery(Stream, RealmCount, count_stream_by_realm_query)
 
+count_message_by_stream_with_user_query = """
+    INSERT INTO analytics_streamcount
+        (stream_id, realm_id, value, property, subgroup, end_time, interval)
+    SELECT
+        zerver_stream.id, zerver_stream.realm_id, count(*), '%(property)s', %(subgroup)s, %%(time_end)s, '%(interval)s'
+    FROM zerver_stream
+    JOIN zerver_recipient
+    ON
+    (
+        zerver_recipient.type = 2 AND
+        zerver_stream.id = zerver_recipient.type_id
+    )
+    JOIN zerver_message
+    ON
+    (
+        zerver_message.recipient_id = zerver_recipient.id AND
+        zerver_message.pub_date >= %%(time_start)s AND
+        zerver_message.pub_date < %%(time_end)s
+        %(join_args)s
+    )
+    JOIN zerver_userprofile
+    ON
+    (
+        zerver_message.sender_id = zerver_userprofile.id
+    )
+    GROUP BY zerver_stream.id %(group_by_clause)s
+"""
+zerver_count_message_by_stream_with_user = ZerverCountQuery(Message, StreamCount, count_message_by_stream_with_user_query)
+
 # This query violates the count_X_by_Y_query conventions in several ways. One,
 # the X table is not specified by the query name; MessageType is not a zerver
 # table. Two, it ignores the subgroup column in the CountStat object; instead,
@@ -329,6 +358,6 @@ COUNT_STATS = {
                                               None, CountStat.DAY, False),
     'messages_sent:client': CountStat('messages_sent:client', zerver_count_message_by_user, {},
                                          (Message, 'sending_client_id'), CountStat.HOUR, False),
-    'messages_sent_to_stream:is_bot': CountStat('messages_sent_to_stream:is_bot', zerver_count_message_by_stream,
+    'messages_sent_to_stream:is_bot': CountStat('messages_sent_to_stream:is_bot', zerver_count_message_by_stream_with_user,
                                               {}, (UserProfile, 'is_bot'), CountStat.HOUR, False)
     }

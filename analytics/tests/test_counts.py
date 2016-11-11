@@ -8,6 +8,7 @@ from analytics.lib.counts import CountStat, COUNT_STATS, process_count_stat, \
     do_fill_count_stat_at_hour, ZerverCountQuery
 from analytics.models import BaseCount, InstallationCount, RealmCount, \
     UserCount, StreamCount, FillState, get_fill_state, installation_epoch
+from zerver.lib.actions import create_stream_if_needed
 
 from zerver.models import Realm, UserProfile, Message, Stream, Recipient, \
     get_user_profile_by_email, get_client
@@ -260,3 +261,38 @@ class TestCountStats(AnalyticsTestCase):
 
         self.assertCountEquals(RealmCount, 'test_active_humans', 1)
         self.assertCountEquals(RealmCount, 'test_active_bots', 2)
+
+    def test_messages_by_stream_with_subgroup(self):
+        # type: () -> None
+        bot1 = self.create_user('email1-bot', is_bot=True)
+        bot2 = self.create_user('email2-bot', is_bot=True)
+        human1 = self.create_user('email3-human', is_bot=False)
+        human2 = self.create_user('email4-human', is_bot=False)
+
+        stat = COUNT_STATS['messages_sent_to_stream:is_bot']
+
+        test_stream1 = create_stream_if_needed(self.default_realm, 'test_stream1')
+        test_stream2 = create_stream_if_needed(self.default_realm, 'test_stream2')
+        
+        human_stream_recipient = Recipient.objects.create(type_id=test_stream1[0].id, type=Recipient.STREAM)
+        bot_stream_recipient = Recipient.objects.create(type_id=test_stream2[0].id, type=Recipient.STREAM)
+        human_personal_recipient = Recipient.objects.create(type_id=human2.id, type=Recipient.PERSONAL)
+        bot_personal_recipient = Recipient.objects.create(type_id=bot2.id, type=Recipient.PERSONAL)
+
+        message =self.create_message(bot1, human_stream_recipient)
+        self.create_message(bot1, bot_stream_recipient)
+        self.create_message(bot1, bot_personal_recipient)
+        self.create_message(human1, human_personal_recipient)
+        self.create_message(human1, bot_stream_recipient)
+        self.create_message(human1, human_stream_recipient)
+
+        print(message.pub_date, "pub date")
+        do_fill_count_stat_at_hour(stat, self.TIME_ZERO-self.DAY)
+
+        print(RealmCount.objects.values().filter(
+            realm = self.default_realm, property='messages_sent_to_stream:is_bot'), "LOOK!")
+
+
+        # assert (messages_from_humans == 2)
+        # assert (messages_from_bots == 1)
+
